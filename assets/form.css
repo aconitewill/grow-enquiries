@@ -1,0 +1,102 @@
+/* =========================================================
+   Grow Enquiries: default form styles.
+
+   Everything is wrapped in :where(), so any theme rule wins. Set the
+   look from the theme with a few variables:
+
+     .gre {
+       --gre-accent: #e30613;
+       --gre-ink: #111;
+       --gre-muted: #666;
+       --gre-bg: #fff;
+       --gre-border: #111;
+       --gre-radius: 0;
+       --gre-font: inherit;
+       --gre-label-font: inherit;
+     }
+
+   Or switch this stylesheet off in Enquiries, Settings, Form.
+   ========================================================= */
+
+:where(.gre) {
+	--gre-accent: #2271b1;
+	--gre-ink: inherit;
+	--gre-muted: #666;
+	--gre-bg: #fff;
+	--gre-border: #c3c4c7;
+	--gre-radius: 4px;
+	--gre-font: inherit;
+	--gre-label-font: inherit;
+	font-family: var(--gre-font);
+	color: var(--gre-ink);
+	max-width: 640px;
+}
+
+:where(.gre__heading) { margin: 0 0 6px; }
+:where(.gre__intro) { margin: 0 0 20px; color: var(--gre-muted); }
+
+:where(.gre__field) { margin: 0 0 16px; }
+:where(.gre__field label) {
+	display: block;
+	margin: 0 0 5px;
+	font-family: var(--gre-label-font);
+	font-weight: 600;
+}
+:where(.gre__optional) { font-weight: 400; color: var(--gre-muted); }
+
+:where(.gre input[type="text"], .gre input[type="email"], .gre input[type="tel"], .gre input[type="date"], .gre select, .gre textarea) {
+	display: block;
+	box-sizing: border-box;
+	width: 100%;
+	padding: 10px 12px;
+	border: 1px solid var(--gre-border);
+	border-radius: var(--gre-radius);
+	background: var(--gre-bg);
+	color: inherit;
+	font: inherit;
+	font-size: 16px; /* no zoom on iPhone */
+	line-height: 1.4;
+}
+:where(.gre textarea) { resize: vertical; min-height: 140px; }
+:where(.gre input[readonly]) { opacity: 0.75; }
+:where(.gre input, .gre select, .gre textarea):focus-visible {
+	outline: 2px solid var(--gre-accent);
+	outline-offset: 1px;
+}
+
+:where(.gre__privacy) { margin: 0 0 16px; font-size: 0.875em; color: var(--gre-muted); }
+
+:where(.gre__button) {
+	display: inline-block;
+	padding: 11px 24px;
+	border: 0;
+	border-radius: var(--gre-radius);
+	background: var(--gre-accent);
+	color: #fff;
+	font: inherit;
+	font-weight: 600;
+	cursor: pointer;
+}
+:where(.gre__button):hover { filter: brightness(0.92); }
+:where(.gre__button):focus-visible { outline: 2px solid var(--gre-accent); outline-offset: 3px; }
+
+:where(.gre__notice) {
+	margin: 0 0 18px;
+	padding: 14px 16px;
+	border-left: 4px solid var(--gre-accent);
+	background: rgba(127, 127, 127, 0.08);
+}
+:where(.gre__notice strong) { display: block; }
+:where(.gre__notice--error) { border-left-color: #d63638; }
+:where(.gre__notice):focus { outline: none; }
+
+/* The honeypot: invisible to people. */
+.gre-hp {
+	position: absolute !important;
+	left: -10000px;
+	width: 1px;
+	height: 1px;
+	overflow: hidden;
+}
+
+:where(.gre-turnstile) { margin: 0 0 16px; }
