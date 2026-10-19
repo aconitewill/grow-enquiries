@@ -29,7 +29,7 @@ function gre_list_columns() {
 		'title'      => __( 'From', 'grow-enquiries' ),
 		'gre_about'  => __( 'About', 'grow-enquiries' ),
 		'gre_status' => __( 'Status', 'grow-enquiries' ),
-		'date'       => __( 'Received', 'grow-enquiries' ),
+		'gre_received' => __( 'Received', 'grow-enquiries' ),
 	);
 	if ( 'spam' === gre_current_view() ) {
 		$cols['gre_reason'] = __( 'Held because', 'grow-enquiries' );
@@ -51,6 +51,20 @@ function gre_list_column( $col, $id ) {
 			break;
 		case 'gre_status':
 			echo gre_status_badge( $id ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+			break;
+		case 'gre_received':
+			$when = (int) get_post_time( 'U', true, $id );
+			$ago  = time() - $when;
+			printf(
+				'<span title="%s">%s</span>',
+				esc_attr( get_the_date( 'j F Y, H:i', $id ) ),
+				esc_html(
+					$ago < DAY_IN_SECONDS
+						/* translators: %s: time ago */
+						? sprintf( __( '%s ago', 'grow-enquiries' ), human_time_diff( $when, time() ) )
+						: get_the_date( 'j M Y, H:i', $id )
+				)
+			);
 			break;
 		case 'gre_reason':
 			echo esc_html( (string) gre_meta( $id, 'reason' ) );
@@ -348,3 +362,27 @@ function gre_admin_notices() {
 	}
 }
 add_action( 'admin_notices', 'gre_admin_notices' );
+
+/**
+ * Received is sortable, by date.
+ *
+ * @param array $cols Sortable columns.
+ * @return array
+ */
+function gre_sortable( $cols ) {
+	$cols['gre_received'] = 'date';
+	return $cols;
+}
+add_filter( 'manage_edit-' . GRE_POST_TYPE . '_sortable_columns', 'gre_sortable' );
+
+/**
+ * Every enquiry is private, so "Private" after each name says nothing.
+ *
+ * @param array   $states States.
+ * @param WP_Post $post   Post.
+ * @return array
+ */
+function gre_post_states( $states, $post ) {
+	return GRE_POST_TYPE === $post->post_type ? array() : $states;
+}
+add_filter( 'display_post_states', 'gre_post_states', 10, 2 );
