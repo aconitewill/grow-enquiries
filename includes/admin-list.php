@@ -9,13 +9,45 @@
 defined( 'ABSPATH' ) || exit;
 
 /**
- * Which view the list is showing: inbox (default) or spam.
+ * Which view the list is showing: inbox (default), spam, or failed
+ * (genuine enquiries whose email hasn't gone).
  *
  * @return string
  */
 function gre_current_view() {
-	$v = isset( $_GET['gre_view'] ) ? sanitize_key( wp_unslash( $_GET['gre_view'] ) ) : 'inbox'; // phpcs:ignore WordPress.Security.NonceVerification.Recommended
-	return 'spam' === $v ? 'spam' : 'inbox';
+	$v = isset( $_REQUEST['gre_view'] ) ? sanitize_key( wp_unslash( $_REQUEST['gre_view'] ) ) : 'inbox'; // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+	return in_array( $v, array( 'spam', 'failed' ), true ) ? $v : 'inbox';
+}
+
+/**
+ * The date range from the list's From and To boxes, as Y-m-d strings.
+ *
+ * @return array { from, to } Either may be ''.
+ */
+function gre_date_range() {
+	$out = array();
+	foreach ( array( 'from', 'to' ) as $k ) {
+		$v         = isset( $_REQUEST[ 'gre_' . $k ] ) ? sanitize_text_field( wp_unslash( $_REQUEST[ 'gre_' . $k ] ) ) : ''; // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+		$out[ $k ] = preg_match( '/^\d{4}-\d{2}-\d{2}$/', $v ) ? $v : '';
+	}
+	return $out;
+}
+
+/**
+ * The date_query for that range, inclusive, in the site's time.
+ *
+ * @return array Empty when there's no range.
+ */
+function gre_date_query() {
+	$r = gre_date_range();
+	$q = array( 'inclusive' => true );
+	if ( $r['from'] ) {
+		$q['after'] = $r['from'] . ' 00:00:00';
+	}
+	if ( $r['to'] ) {
+		$q['before'] = $r['to'] . ' 23:59:59';
+	}
+	return count( $q ) > 1 ? array( $q ) : array();
 }
 
 /**
@@ -33,6 +65,9 @@ function gre_list_columns() {
 	);
 	if ( 'spam' === gre_current_view() ) {
 		$cols['gre_reason'] = __( 'Held because', 'grow-enquiries' );
+	}
+	if ( 'failed' === gre_current_view() ) {
+		$cols['gre_error'] = __( 'Email error', 'grow-enquiries' );
 	}
 	return $cols;
 }
@@ -69,6 +104,9 @@ function gre_list_column( $col, $id ) {
 		case 'gre_reason':
 			echo esc_html( (string) gre_meta( $id, 'reason' ) );
 			break;
+		case 'gre_error':
+			echo esc_html( (string) gre_meta( $id, 'mail_error' ) );
+			break;
 	}
 }
 add_action( 'manage_' . GRE_POST_TYPE . '_posts_custom_column', 'gre_list_column', 10, 2 );
@@ -84,9 +122,12 @@ function gre_status_badge( $id ) {
 	$map    = array(
 		'sent'   => array( '#00a32a', gre_meta( $id, 'released' ) ? __( 'Emailed (released)', 'grow-enquiries' ) : __( 'Emailed', 'grow-enquiries' ) ),
 		'held'   => array( '#dba617', __( 'Held as spam', 'grow-enquiries' ) ),
-		'failed' => array( '#d63638', __( 'Email failed', 'grow-enquiries' ) ),
+		'failed' => array( '#d63638', __( 'Email failed, retrying', 'grow-enquiries' ) ),
 	);
 	list( $colour, $label ) = $map[ $status ];
+	if ( 'failed' === $status && gre_meta( $id, 'flagged' ) ) {
+		return '<span style="display:inline-block;padding:1px 8px;border-radius:10px;border:1px solid #d63638;background:#d63638;color:#fff;font-size:12px;white-space:nowrap">' . esc_html__( 'Not emailed: reply by hand', 'grow-enquiries' ) . '</span>';
+	}
 	return '<span style="display:inline-block;padding:1px 8px;border-radius:10px;border:1px solid ' . $colour . ';color:' . $colour . ';font-size:12px;white-space:nowrap">' . esc_html( $label ) . '</span>';
 }
 
@@ -121,6 +162,9 @@ function gre_row_actions( $actions, $post ) {
 		if ( gre_meta( $post->ID, 'spam' ) ) {
 			$out['release'] = '<a href="' . esc_url( gre_action_url( 'release', $post->ID ) ) . '">' . esc_html__( 'Release and send', 'grow-enquiries' ) . '</a>';
 		} else {
+			if ( ! gre_meta( $post->ID, 'sent' ) ) {
+				$out['resend'] = '<a href="' . esc_url( gre_action_url( 'resend', $post->ID ) ) . '">' . esc_html__( 'Resend email', 'grow-enquiries' ) . '</a>';
+			}
 			$out['spam'] = '<a href="' . esc_url( gre_action_url( 'spam', $post->ID ) ) . '">' . esc_html__( 'Mark as spam', 'grow-enquiries' ) . '</a>';
 		}
 	}
@@ -169,13 +213,23 @@ function gre_views( $views ) {
 	$trash = isset( $_GET['post_status'] ) && 'trash' === $_GET['post_status']; // phpcs:ignore WordPress.Security.NonceVerification.Recommended
 	$cur   = $trash ? '' : gre_current_view();
 	$out   = array();
-	foreach ( array( 'inbox' => __( 'Inbox', 'grow-enquiries' ), 'spam' => __( 'Spam', 'grow-enquiries' ) ) as $key => $label ) {
+	$list  = array(
+		'inbox'  => __( 'Inbox', 'grow-enquiries' ),
+		'spam'   => __( 'Spam', 'grow-enquiries' ),
+		'failed' => __( 'Not emailed', 'grow-enquiries' ),
+	);
+	foreach ( $list as $key => $label ) {
+		$n = gre_view_count( $key );
+		if ( 'failed' === $key && ! $n && 'failed' !== $cur ) {
+			continue;
+		}
 		$out[ $key ] = sprintf(
-			'<a href="%s"%s>%s <span class="count">(%d)</span></a>',
+			'<a href="%s"%s%s>%s <span class="count">(%d)</span></a>',
 			esc_url( add_query_arg( 'gre_view', $key, $base ) ),
 			$key === $cur ? ' class="current" aria-current="page"' : '',
+			'failed' === $key && $n ? ' style="color:#d63638"' : '',
 			esc_html( $label ),
-			gre_count( 'spam' === $key )
+			$n
 		);
 	}
 	if ( isset( $views['trash'] ) ) {
@@ -192,21 +246,7 @@ add_filter( 'views_edit-' . GRE_POST_TYPE, 'gre_views' );
  * @return int
  */
 function gre_count( $spam ) {
-	$q = new WP_Query(
-		array(
-			'post_type'      => GRE_POST_TYPE,
-			'post_status'    => 'private',
-			'posts_per_page' => 1,
-			'fields'         => 'ids',
-			'meta_query'     => array( // phpcs:ignore WordPress.DB.SlowDBQuery.slow_db_query_meta_query
-				array(
-					'key'   => '_gre_spam',
-					'value' => $spam ? '1' : '0',
-				),
-			),
-		)
-	);
-	return (int) $q->found_posts;
+	return gre_view_count( $spam ? 'spam' : 'inbox' );
 }
 
 /**
@@ -218,19 +258,14 @@ function gre_filter_list( $q ) {
 	if ( ! is_admin() || ! $q->is_main_query() || GRE_POST_TYPE !== $q->get( 'post_type' ) ) {
 		return;
 	}
+	if ( gre_date_query() ) {
+		$q->set( 'date_query', gre_date_query() );
+	}
 	if ( 'trash' === $q->get( 'post_status' ) ) {
 		return;
 	}
 	$q->set( 'post_status', 'private' );
-	$q->set(
-		'meta_query',
-		array(
-			array(
-				'key'   => '_gre_spam',
-				'value' => 'spam' === gre_current_view() ? '1' : '0',
-			),
-		)
-	);
+	$q->set( 'meta_query', gre_view_meta_query( gre_current_view() ) );
 }
 add_action( 'pre_get_posts', 'gre_filter_list' );
 
@@ -246,6 +281,9 @@ function gre_bulk_actions( $actions ) {
 	if ( 'spam' === gre_current_view() ) {
 		$out['gre_release'] = __( 'Release and send', 'grow-enquiries' );
 	} else {
+		if ( 'failed' === gre_current_view() ) {
+			$out['gre_resend'] = __( 'Resend email', 'grow-enquiries' );
+		}
 		$out['gre_spam'] = __( 'Mark as spam', 'grow-enquiries' );
 		$out['gre_read'] = __( 'Mark as read', 'grow-enquiries' );
 	}
@@ -266,13 +304,14 @@ function gre_handle_bulk( $redirect, $action, $ids ) {
 		'gre_release' => 'release',
 		'gre_spam'    => 'spam',
 		'gre_read'    => 'read',
+		'gre_resend'  => 'resend',
 	);
 	if ( ! isset( $map[ $action ] ) || ! current_user_can( GRE_CAP ) ) {
 		return $redirect;
 	}
 	$done = 0;
 	foreach ( $ids as $id ) {
-		if ( gre_do_action( $map[ $action ], (int) $id ) ) {
+		if ( true === gre_do_action( $map[ $action ], (int) $id ) ) {
 			$done++;
 		}
 	}
@@ -292,6 +331,9 @@ function gre_row_class( $classes, $class, $id ) {
 	if ( is_admin() && GRE_POST_TYPE === get_post_type( $id ) && ! gre_meta( $id, 'read' ) && ! gre_meta( $id, 'spam' ) ) {
 		$classes[] = 'gre-unread';
 	}
+	if ( is_admin() && GRE_POST_TYPE === get_post_type( $id ) && gre_meta( $id, 'flagged' ) && ! gre_meta( $id, 'spam' ) && ! gre_meta( $id, 'sent' ) ) {
+		$classes[] = 'gre-flagged';
+	}
 	return $classes;
 }
 add_filter( 'post_class', 'gre_row_class', 10, 3 );
@@ -307,7 +349,10 @@ function gre_admin_css() {
 	echo '<style>
 		.gre-unread .row-title{font-weight:800}
 		.gre-unread .row-title::before{content:"";display:inline-block;width:8px;height:8px;border-radius:50%;background:#2271b1;margin-right:6px;vertical-align:middle}
+		.gre-flagged th.check-column{box-shadow:inset 4px 0 0 #d63638}
 		.gre-row-email{color:#50575e}
+		.gre-range{display:inline-flex;align-items:center;gap:4px;margin-right:6px}
+		.gre-range input[type=date]{height:30px;line-height:1}
 		.gre-row-first{color:#787c82;margin-top:2px}
 		.post-type-' . esc_attr( GRE_POST_TYPE ) . ' .page-title-action{display:none}
 		.column-gre_status{width:150px}.column-gre_about{width:18%}
@@ -336,9 +381,30 @@ function gre_menu_bubble() {
 add_action( 'admin_menu', 'gre_menu_bubble', 99 );
 
 /**
- * Notices after actions.
+ * Notices after actions, and a standing one while any email has failed
+ * every retry.
  */
 function gre_admin_notices() {
+	$screen = get_current_screen();
+	if ( $screen && GRE_POST_TYPE === $screen->post_type && current_user_can( GRE_CAP ) ) {
+		$flagged = gre_flagged_count();
+		if ( $flagged ) {
+			printf(
+				'<div class="notice notice-error"><p>%s <a href="%s">%s</a></p></div>',
+				esc_html(
+					sprintf(
+						/* translators: 1: number, 2: tries */
+						_n( '%1$d enquiry could not be emailed after %2$d tries. It is safe in the log: reply to it by hand.', '%1$d enquiries could not be emailed after %2$d tries. They are safe in the log: reply to them by hand.', $flagged, 'grow-enquiries' ),
+						$flagged,
+						GRE_MAX_TRIES + 1
+					)
+				),
+				esc_url( admin_url( 'edit.php?post_type=' . GRE_POST_TYPE . '&gre_view=failed' ) ),
+				esc_html__( 'Show them', 'grow-enquiries' )
+			);
+		}
+	}
+
 	// phpcs:disable WordPress.Security.NonceVerification.Recommended
 	if ( empty( $_GET['gre_done'] ) ) {
 		return;
@@ -352,7 +418,7 @@ function gre_admin_notices() {
 		'spam'         => _n( 'Marked as spam.', '%d enquiries marked as spam.', $n, 'grow-enquiries' ),
 		'block'        => __( 'Marked as spam, and the sender is blocked from now on.', 'grow-enquiries' ),
 		'read'         => _n( 'Marked as read.', '%d enquiries marked as read.', $n, 'grow-enquiries' ),
-		'resend'       => __( 'Emailed again.', 'grow-enquiries' ),
+		'resend'       => _n( 'Emailed again.', '%d enquiries emailed again.', $n, 'grow-enquiries' ),
 		'resend_fail'  => __( 'The email failed again. Check the mail plugin under Enquiries, Settings, Tools.', 'grow-enquiries' ),
 		'bin'          => __( 'Moved to the bin.', 'grow-enquiries' ),
 	);

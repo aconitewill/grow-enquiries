@@ -1,0 +1,4 @@
+# Left out of the release zip (git archive), so sites get only the plugin.
+/.github export-ignore
+/.gitattributes export-ignore
+/.gitignore export-ignore

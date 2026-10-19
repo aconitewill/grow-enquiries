@@ -36,9 +36,11 @@ function gre_defaults() {
 		'rate_limit'        => 5,           // Per IP per hour.
 		'behind_cloudflare' => 0,           // Trust CF-Connecting-IP.
 
-		// Retention.
+		// Retention and digest.
 		'spam_days'         => 60,
 		'retention_months'  => 24,          // 0 = keep forever.
+		'digest'            => 'monthly',   // off | weekly | monthly.
+		'digest_to'         => '',          // Blank: the recipients.
 
 		// Form.
 		'thanks_heading'    => 'Thank you, your message is on its way.',
@@ -97,17 +99,36 @@ function gre_setting( $key ) {
  * @return string[]
  */
 function gre_recipients() {
+	$list = gre_parse_addresses( (string) gre_setting( 'recipients' ) );
+	return $list ? $list : array( get_option( 'admin_email' ) );
+}
+
+/**
+ * Valid addresses from a list separated by lines, commas or spaces.
+ *
+ * @param string $text Addresses.
+ * @return string[]
+ */
+function gre_parse_addresses( $text ) {
 	$list = array();
-	foreach ( preg_split( '/[\s,;]+/', (string) gre_setting( 'recipients' ) ) as $addr ) {
+	foreach ( preg_split( '/[\s,;]+/', $text ) as $addr ) {
 		$addr = sanitize_email( $addr );
 		if ( is_email( $addr ) ) {
 			$list[] = $addr;
 		}
 	}
-	if ( ! $list ) {
-		$list[] = get_option( 'admin_email' );
-	}
 	return array_values( array_unique( $list ) );
+}
+
+/**
+ * Where the digest goes: its own address if set, otherwise the
+ * recipients.
+ *
+ * @return string[]
+ */
+function gre_digest_recipients() {
+	$list = gre_parse_addresses( (string) gre_setting( 'digest_to' ) );
+	return $list ? $list : gre_recipients();
 }
 
 /**

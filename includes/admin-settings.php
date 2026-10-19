@@ -47,10 +47,12 @@ function gre_settings_tabs() {
 			),
 		),
 		'retention' => array(
-			'label'  => __( 'Retention', 'grow-enquiries' ),
+			'label'  => __( 'Retention and digest', 'grow-enquiries' ),
 			'fields' => array(
 				'spam_days'        => array( 'number', __( 'Delete held spam after (days)', 'grow-enquiries' ), __( 'Default 60.', 'grow-enquiries' ) ),
 				'retention_months' => array( 'number', __( 'Delete genuine enquiries after (months)', 'grow-enquiries' ), __( '0 keeps them forever. Default 24. Say so in the privacy policy.', 'grow-enquiries' ) ),
+				'digest'           => array( 'select', __( 'Digest of held spam', 'grow-enquiries' ), __( 'An email listing what the spam filter held, and any enquiry whose email failed, so nothing is deleted unseen. Weekly comes on Mondays, monthly on the 1st. Only sent when there is something in it.', 'grow-enquiries' ), array( 'monthly' => __( 'Monthly', 'grow-enquiries' ), 'weekly' => __( 'Weekly', 'grow-enquiries' ), 'off' => __( 'Off', 'grow-enquiries' ) ) ),
+				'digest_to'        => array( 'text', __( 'Send the digest to', 'grow-enquiries' ), __( 'Blank sends it to the enquiry recipients. Several addresses: separate them with commas.', 'grow-enquiries' ) ),
 			),
 		),
 		'form'     => array(
@@ -155,6 +157,20 @@ function gre_test_email() {
 	exit;
 }
 add_action( 'admin_post_gre_test_email', 'gre_test_email' );
+
+/**
+ * Send what the next digest would hold, now, without moving the period on.
+ */
+function gre_digest_preview() {
+	check_admin_referer( 'gre_digest_preview' );
+	if ( ! current_user_can( 'manage_options' ) ) {
+		wp_die( esc_html__( 'Not allowed.', 'grow-enquiries' ) );
+	}
+	$result = gre_send_digest( gre_digest_last(), true );
+	wp_safe_redirect( admin_url( 'edit.php?post_type=' . GRE_POST_TYPE . '&page=grow-enquiries-settings&tab=tools&digest=' . $result ) );
+	exit;
+}
+add_action( 'admin_post_gre_digest_preview', 'gre_digest_preview' );
 
 /**
  * Render one field.
@@ -262,17 +278,21 @@ function gre_render_settings() {
 					<h2><?php esc_html_e( 'Suggested privacy policy wording', 'grow-enquiries' ); ?></h2>
 					<p class="description" style="max-width:700px">
 						<?php
-						$m = (int) gre_setting( 'retention_months' );
-						echo esc_html(
+						echo wp_kses(
 							sprintf(
-								/* translators: 1: months sentence, 2: days */
-								__( 'When you send a message through the contact form, we keep your name, email address and message so we can reply. %1$s Messages our spam filter holds are deleted after %2$d days. We never sell or share your details.', 'grow-enquiries' ),
-								$m ? sprintf( /* translators: %d: months */ __( 'We delete them after %d months.', 'grow-enquiries' ), $m ) : __( 'We keep them until you ask us to delete them.', 'grow-enquiries' ),
-								(int) gre_setting( 'spam_days' )
-							)
+								/* translators: %s: link to Settings, Privacy */
+								__( 'Also in WordPress\'s privacy policy guide (%s). It follows these settings. Requests to see or delete someone\'s enquiries: Tools, Export Personal Data and Erase Personal Data, by email address.', 'grow-enquiries' ),
+								'<a href="' . esc_url( admin_url( 'options-privacy.php?tab=policyguide' ) ) . '">' . esc_html__( 'Settings, Privacy, Policy guide', 'grow-enquiries' ) . '</a>'
+							),
+							array( 'a' => array( 'href' => array() ) )
 						);
 						?>
 					</p>
+					<div style="max-width:700px;background:#fff;border:1px solid #dcdcde;padding:4px 16px">
+						<?php foreach ( gre_privacy_paragraphs() as $para ) : ?>
+							<p><?php echo esc_html( $para ); ?></p>
+						<?php endforeach; ?>
+					</div>
 				<?php endif; ?>
 				<?php submit_button(); ?>
 			</form>
@@ -286,7 +306,8 @@ function gre_render_settings() {
  */
 function gre_render_tools() {
 	// phpcs:disable WordPress.Security.NonceVerification.Recommended
-	$test = isset( $_GET['test'] ) ? sanitize_key( wp_unslash( $_GET['test'] ) ) : '';
+	$test   = isset( $_GET['test'] ) ? sanitize_key( wp_unslash( $_GET['test'] ) ) : '';
+	$digest = isset( $_GET['digest'] ) ? sanitize_key( wp_unslash( $_GET['digest'] ) ) : '';
 	// phpcs:enable
 	$sample = '';
 	$result = null;
@@ -296,7 +317,12 @@ function gre_render_tools() {
 	}
 	$mailer = gre_mailer_name();
 	$next   = wp_next_scheduled( 'gre_daily' );
+	$hourly = wp_next_scheduled( 'gre_hourly' );
 	$last   = (int) get_option( 'grow_enquiries_last_purge', 0 );
+	$sent   = (int) get_option( 'grow_enquiries_last_digest_sent', 0 );
+	$queue  = count( gre_retry_queue() );
+	$fail   = gre_failed_count();
+	$freq   = (string) gre_setting( 'digest' );
 	?>
 	<h2><?php esc_html_e( 'Send a test email', 'grow-enquiries' ); ?></h2>
 	<?php if ( 'ok' === $test ) : ?>
@@ -310,6 +336,24 @@ function gre_render_tools() {
 		<p><?php echo esc_html( sprintf( /* translators: %s: addresses */ __( 'Goes to: %s', 'grow-enquiries' ), implode( ', ', gre_recipients() ) ) ); ?></p>
 		<?php submit_button( __( 'Send test email', 'grow-enquiries' ), 'secondary', 'submit', false ); ?>
 	</form>
+
+	<h2><?php esc_html_e( 'Digest', 'grow-enquiries' ); ?></h2>
+	<?php if ( 'sent' === $digest ) : ?>
+		<div class="notice notice-success inline"><p><?php esc_html_e( 'Preview sent. Check the inbox.', 'grow-enquiries' ); ?></p></div>
+	<?php elseif ( 'empty' === $digest ) : ?>
+		<div class="notice notice-info inline"><p><?php esc_html_e( 'Nothing to send: nothing held since the last digest, and no failed emails.', 'grow-enquiries' ); ?></p></div>
+	<?php elseif ( 'failed' === $digest ) : ?>
+		<div class="notice notice-error inline"><p><?php esc_html_e( 'WordPress could not send it. Check the mail plugin.', 'grow-enquiries' ); ?></p></div>
+	<?php endif; ?>
+	<form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>">
+		<input type="hidden" name="action" value="gre_digest_preview">
+		<?php wp_nonce_field( 'gre_digest_preview' ); ?>
+		<p><?php echo esc_html( sprintf( /* translators: %s: addresses */ __( 'Sends what the next digest would hold, now, to %s. The next real digest still covers the same period.', 'grow-enquiries' ), implode( ', ', gre_digest_recipients() ) ) ); ?></p>
+		<?php submit_button( __( 'Send a preview of the digest', 'grow-enquiries' ), 'secondary', 'submit', false ); ?>
+	</form>
+
+	<h2><?php esc_html_e( 'Export', 'grow-enquiries' ); ?></h2>
+	<p><?php echo wp_kses( sprintf( /* translators: %s: link */ __( 'Export CSV is above the list on %s: it exports the view you are looking at (Inbox, Spam, Not emailed or Bin), with an optional date range.', 'grow-enquiries' ), '<a href="' . esc_url( admin_url( 'edit.php?post_type=' . GRE_POST_TYPE ) ) . '">' . esc_html__( 'Enquiries', 'grow-enquiries' ) . '</a>' ), array( 'a' => array( 'href' => array() ) ) ); ?></p>
 
 	<h2><?php esc_html_e( 'Test a message', 'grow-enquiries' ); ?></h2>
 	<p class="description"><?php esc_html_e( 'Paste any message to see how the spam filter scores it with this site\'s settings. Nothing is saved or sent.', 'grow-enquiries' ); ?></p>
@@ -337,7 +381,19 @@ function gre_render_tools() {
 		<tr><td><?php esc_html_e( 'Mail', 'grow-enquiries' ); ?></td><td><?php echo $mailer ? esc_html( sprintf( /* translators: %s: plugin */ __( 'Delivered by %s', 'grow-enquiries' ), $mailer ) ) : '<strong style="color:#d63638">' . esc_html__( 'No mail plugin found: WordPress is sending mail itself, which often lands in spam. Install Postmark.', 'grow-enquiries' ) . '</strong>'; ?></td></tr>
 		<tr><td><?php esc_html_e( 'Turnstile', 'grow-enquiries' ); ?></td><td><?php echo gre_turnstile_on() ? esc_html__( 'On', 'grow-enquiries' ) : esc_html__( 'Off (honeypot, time and content checks still run)', 'grow-enquiries' ); ?></td></tr>
 		<tr><td><?php esc_html_e( 'Daily clean-up', 'grow-enquiries' ); ?></td><td><?php echo $next ? esc_html( sprintf( /* translators: %s: date */ __( 'Next run %s', 'grow-enquiries' ), wp_date( 'j F Y, H:i', $next ) ) ) : '<strong style="color:#d63638">' . esc_html__( 'Not scheduled. Deactivate and reactivate the plugin.', 'grow-enquiries' ) . '</strong>'; ?><?php echo $last ? esc_html( sprintf( /* translators: %s: date */ __( '. Last run %s', 'grow-enquiries' ), wp_date( 'j F Y, H:i', $last ) ) ) : ''; ?></td></tr>
-		<tr><td><?php esc_html_e( 'Enquiries', 'grow-enquiries' ); ?></td><td><?php echo esc_html( sprintf( /* translators: 1: inbox, 2: spam */ __( '%1$d in the inbox, %2$d held as spam', 'grow-enquiries' ), gre_count( false ), gre_count( true ) ) ); ?></td></tr>
+		<tr><td><?php esc_html_e( 'Email retries', 'grow-enquiries' ); ?></td><td><?php echo $hourly ? esc_html( sprintf( /* translators: 1: date, 2: number being retried, 3: max tries */ __( 'Next run %1$s. %2$d being retried (up to %3$d times, hourly).', 'grow-enquiries' ), wp_date( 'j F Y, H:i', $hourly ), $queue, GRE_MAX_TRIES ) ) : '<strong style="color:#d63638">' . esc_html__( 'Not scheduled. Deactivate and reactivate the plugin.', 'grow-enquiries' ) . '</strong>'; ?></td></tr>
+		<tr><td><?php esc_html_e( 'Digest', 'grow-enquiries' ); ?></td><td>
+			<?php
+			if ( 'off' === $freq ) {
+				esc_html_e( 'Off', 'grow-enquiries' );
+			} else {
+				echo esc_html( 'weekly' === $freq ? __( 'Weekly, on Mondays', 'grow-enquiries' ) : __( 'Monthly, on the 1st', 'grow-enquiries' ) );
+				echo esc_html( $sent ? sprintf( /* translators: %s: date */ __( '. Last sent %s', 'grow-enquiries' ), wp_date( 'j F Y, H:i', $sent ) ) : __( '. None sent yet', 'grow-enquiries' ) );
+			}
+			?>
+		</td></tr>
+		<tr><td><?php esc_html_e( 'Updates', 'grow-enquiries' ); ?></td><td><?php echo isset( $GLOBALS['gre_update_checker'] ) ? esc_html__( 'Checked against GitHub releases (aconitewill/grow-enquiries), shown in Dashboard, Updates', 'grow-enquiries' ) : esc_html__( 'Off (a git checkout, or GRE_DISABLE_UPDATES is set)', 'grow-enquiries' ); ?></td></tr>
+		<tr><td><?php esc_html_e( 'Enquiries', 'grow-enquiries' ); ?></td><td><?php echo esc_html( sprintf( /* translators: 1: inbox, 2: spam, 3: not emailed */ __( '%1$d in the inbox, %2$d held as spam, %3$d not emailed', 'grow-enquiries' ), gre_count( false ), gre_count( true ), $fail ) ); ?></td></tr>
 	</table>
 	<?php
 }

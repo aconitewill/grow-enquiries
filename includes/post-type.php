@@ -174,3 +174,86 @@ function gre_unread_count() {
 	);
 	return (int) $q->found_posts;
 }
+
+/**
+ * The meta query for a view of the log.
+ *
+ * @param string $view inbox | spam | failed (genuine, email not sent).
+ * @return array
+ */
+function gre_view_meta_query( $view ) {
+	$q = array(
+		array(
+			'key'   => '_gre_spam',
+			'value' => 'spam' === $view ? '1' : '0',
+		),
+	);
+	if ( 'failed' === $view ) {
+		$q[] = array(
+			'key'   => '_gre_sent',
+			'value' => '0',
+		);
+	}
+	return $q;
+}
+
+/**
+ * How many enquiries are in a view, optionally since a time.
+ *
+ * @param string $view  inbox | spam | failed.
+ * @param int    $since Received after this timestamp (0: any time).
+ * @return int
+ */
+function gre_view_count( $view, $since = 0 ) {
+	$args = array(
+		'post_type'      => GRE_POST_TYPE,
+		'post_status'    => 'private',
+		'posts_per_page' => 1,
+		'fields'         => 'ids',
+		'meta_query'     => gre_view_meta_query( $view ), // phpcs:ignore WordPress.DB.SlowDBQuery.slow_db_query_meta_query
+	);
+	if ( $since ) {
+		$args['date_query'] = array(
+			array(
+				'column' => 'post_date_gmt',
+				'after'  => gmdate( 'Y-m-d H:i:s', $since ),
+			),
+		);
+	}
+	return (int) ( new WP_Query( $args ) )->found_posts;
+}
+
+/**
+ * Genuine enquiries whose email hasn't gone.
+ *
+ * @return int
+ */
+function gre_failed_count() {
+	return gre_view_count( 'failed' );
+}
+
+/**
+ * Those that have failed every retry and wait for a person.
+ *
+ * @return int
+ */
+function gre_flagged_count() {
+	$q = new WP_Query(
+		array(
+			'post_type'      => GRE_POST_TYPE,
+			'post_status'    => 'private',
+			'posts_per_page' => 1,
+			'fields'         => 'ids',
+			'meta_query'     => array_merge( // phpcs:ignore WordPress.DB.SlowDBQuery.slow_db_query_meta_query
+				gre_view_meta_query( 'failed' ),
+				array(
+					array(
+						'key'   => '_gre_flagged',
+						'value' => '1',
+					),
+				)
+			),
+		)
+	);
+	return (int) $q->found_posts;
+}

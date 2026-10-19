@@ -2,9 +2,10 @@
 /**
  * Plugin Name:       Grow Enquiries
  * Description:       Enquiry forms with a private log, cache-safe spam protection and shadow-accept quarantine. Forms by template tag or [enquiry_form] shortcode; nothing ever prints the recipient's address.
- * Version:           0.1.0
+ * Version:           0.2.0
  * Requires at least: 6.4
  * Requires PHP:      8.0
+ * Update URI:        https://github.com/aconitewill/grow-enquiries
  * Author:            Grow Creative
  * Author URI:        https://growcreative.com/
  * License:           GPL-2.0-or-later
@@ -15,7 +16,7 @@
 
 defined( 'ABSPATH' ) || exit;
 
-const GRE_VERSION   = '0.1.0';
+const GRE_VERSION   = '0.2.0';
 const GRE_FILE      = __FILE__;
 const GRE_POST_TYPE = 'grow_enquiry';
 const GRE_CAP       = 'manage_enquiries';
@@ -28,14 +29,25 @@ require GRE_DIR . 'includes/settings.php';
 require GRE_DIR . 'includes/spam.php';
 require GRE_DIR . 'includes/post-type.php';
 require GRE_DIR . 'includes/mail.php';
+require GRE_DIR . 'includes/actions.php';
 require GRE_DIR . 'includes/form.php';
 require GRE_DIR . 'includes/cron.php';
+require GRE_DIR . 'includes/digest.php';
+require GRE_DIR . 'includes/privacy.php';
 
 if ( is_admin() ) {
 	require GRE_DIR . 'includes/admin-list.php';
 	require GRE_DIR . 'includes/admin-view.php';
 	require GRE_DIR . 'includes/admin-settings.php';
+	require GRE_DIR . 'includes/export.php';
+	require GRE_DIR . 'includes/dashboard.php';
 }
+
+if ( defined( 'WP_CLI' ) && WP_CLI ) {
+	require GRE_DIR . 'includes/cli.php';
+}
+
+gre_update_checker();
 
 /**
  * Activation: capability for administrators and editors, cron jobs.
@@ -52,6 +64,7 @@ register_activation_hook( __FILE__, 'gre_activate' );
  */
 function gre_deactivate() {
 	wp_clear_scheduled_hook( 'gre_daily' );
+	wp_clear_scheduled_hook( 'gre_hourly' );
 }
 register_deactivation_hook( __FILE__, 'gre_deactivate' );
 
@@ -81,3 +94,21 @@ function gre_maybe_upgrade() {
 	update_option( 'grow_enquiries_version', GRE_VERSION, false );
 }
 add_action( 'init', 'gre_maybe_upgrade', 1 );
+
+/**
+ * Updates from GitHub releases (Plugin Update Checker, MIT, in lib/):
+ * each site sees "update available" in Dashboard, Updates like any other
+ * plugin, and downloads the zip the release workflow attaches. Off in a
+ * git checkout, so updating a development copy can't wipe its .git, and
+ * off when GRE_DISABLE_UPDATES is true.
+ */
+function gre_update_checker() {
+	$on = ! is_dir( GRE_DIR . '.git' ) && ! ( defined( 'GRE_DISABLE_UPDATES' ) && GRE_DISABLE_UPDATES );
+	if ( ! apply_filters( 'grow_enquiry_update_checker', $on ) || ! is_readable( GRE_DIR . 'lib/plugin-update-checker/plugin-update-checker.php' ) ) {
+		return;
+	}
+	require_once GRE_DIR . 'lib/plugin-update-checker/plugin-update-checker.php';
+	$checker = \YahnisElsts\PluginUpdateChecker\v5\PucFactory::buildUpdateChecker( 'https://github.com/aconitewill/grow-enquiries/', GRE_FILE, 'grow-enquiries' );
+	$checker->getVcsApi()->enableReleaseAssets( '/^grow-enquiries\.zip$/' );
+	$GLOBALS['gre_update_checker'] = $checker;
+}

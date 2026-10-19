@@ -1,0 +1,54 @@
+# On each tagged release (v0.2.0 and so on), build a clean zip of the
+# plugin and attach it to a GitHub release. Sites running the plugin see
+# the update in Dashboard, Updates and install this zip.
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Check the version matches the tag
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          HEADER=$(sed -n 's/^ \* Version: *//p' grow-enquiries.php | tr -d '[:space:]')
+          CONSTANT=$(sed -n "s/^const GRE_VERSION *= *'\(.*\)';/\1/p" grow-enquiries.php)
+          echo "Tag $TAG, header $HEADER, constant $CONSTANT"
+          if [ "$TAG" != "$HEADER" ] || [ "$TAG" != "$CONSTANT" ]; then
+            echo "::error::Tag, plugin header and GRE_VERSION must all say the same version."
+            exit 1
+          fi
+
+      - name: Build the zip
+        run: |
+          git archive --format=zip --prefix=grow-enquiries/ -o grow-enquiries.zip "$GITHUB_REF_NAME"
+          unzip -l grow-enquiries.zip
+
+      - name: Release notes from CHANGELOG.md
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          awk -v v="$VERSION" '
+            /^## / { if (found) exit; if (index($0, "## " v " ") == 1) { found = 1; next } }
+            found { print }
+          ' CHANGELOG.md > notes.md
+          [ -s notes.md ] || echo "See CHANGELOG.md." > notes.md
+          cat notes.md
+
+      - name: Create the release, or add the zip to it
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" grow-enquiries.zip --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" grow-enquiries.zip --title "Grow Enquiries ${GITHUB_REF_NAME#v}" --notes-file notes.md
+          fi

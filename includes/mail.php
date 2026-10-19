@@ -107,6 +107,42 @@ function gre_send( $id ) {
 }
 
 /**
+ * Email an enquiry and record how it went: sent, or the error and the
+ * time of the try, for the hourly retry. Success clears any flag.
+ *
+ * @param int $id Enquiry.
+ * @return bool
+ */
+function gre_deliver( $id ) {
+	$GLOBALS['gre_mail_error'] = '';
+	add_action( 'wp_mail_failed', 'gre_catch_mail_error' );
+	$ok = gre_send( $id );
+	remove_action( 'wp_mail_failed', 'gre_catch_mail_error' );
+
+	update_post_meta( $id, '_gre_sent', $ok ? 1 : 0 );
+	update_post_meta( $id, '_gre_last_try', time() );
+	if ( $ok ) {
+		delete_post_meta( $id, '_gre_mail_error' );
+		delete_post_meta( $id, '_gre_flagged' );
+	} else {
+		$error = '' !== $GLOBALS['gre_mail_error'] ? $GLOBALS['gre_mail_error'] : __( 'The mail plugin reported a failure.', 'grow-enquiries' );
+		update_post_meta( $id, '_gre_mail_error', mb_substr( $error, 0, 300 ) );
+	}
+	return $ok;
+}
+
+/**
+ * Keep WordPress's reason for a failed email.
+ *
+ * @param WP_Error $error Error.
+ */
+function gre_catch_mail_error( $error ) {
+	if ( is_wp_error( $error ) ) {
+		$GLOBALS['gre_mail_error'] = sanitize_text_field( $error->get_error_message() );
+	}
+}
+
+/**
  * The HTML email: one column, the accent colour, the message in a box.
  *
  * @param string $name    Sender.

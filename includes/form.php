@@ -365,7 +365,7 @@ function gre_handle() {
 	// Shadow-accept: held enquiries aren't emailed, but the sender sees the
 	// same thank-you as everyone else.
 	if ( ! $reasons && $id ) {
-		update_post_meta( $id, '_gre_sent', gre_send( $id ) ? 1 : 0 );
+		gre_deliver( $id );
 	}
 
 	/**
@@ -377,7 +377,8 @@ function gre_handle() {
 	do_action( 'grow_enquiry_received', $id, $reasons );
 
 	// The visitor sees the thank-you even if the email failed: the message
-	// is safe in the log, which flags it. The recipient is never printed.
+	// is safe in the log and the hourly job retries it. The recipient is
+	// never printed.
 	gre_redirect( $back, $form_id, 'success' );
 }
 add_action( 'admin_post_nopriv_grow_enquiry', 'gre_handle' );
