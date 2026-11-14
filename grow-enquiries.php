@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       Grow Enquiries
  * Description:       Enquiry forms with a private log, cache-safe spam protection and shadow-accept quarantine. Forms by template tag or [enquiry_form] shortcode; nothing ever prints the recipient's address.
- * Version:           0.2.0
+ * Version:           0.2.1
  * Requires at least: 6.4
  * Requires PHP:      8.0
  * Update URI:        https://github.com/aconitewill/grow-enquiries
@@ -16,7 +16,7 @@
 
 defined( 'ABSPATH' ) || exit;
 
-const GRE_VERSION   = '0.2.0';
+const GRE_VERSION   = '0.2.1';
 const GRE_FILE      = __FILE__;
 const GRE_POST_TYPE = 'grow_enquiry';
 const GRE_CAP       = 'manage_enquiries';

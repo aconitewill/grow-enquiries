@@ -55,6 +55,15 @@ function gre_base_terms() {
 		'ppc'                       => array( '\bppc\b', 2 ),
 		'geo'                       => array( '\bgeo\b', 2 ),
 		'chatgpt'                   => array( '\b(chatgpt|llms?)\b', 2 ),
+		// Weight 2, added 0.2.1: a seller talking about the site owner's
+		// business ("we can get you", "your brand"), which a genuine client
+		// writing about their own business doesn't do. Two of them, or one
+		// with any term above, holds the message.
+		'we can get you'            => array( '\bwe (can|could|will|would) (get|have|put|bring|drive|help|boost|grow) (you|your)\b', 2 ),
+		'your brand in search'      => array( '\byour (brand|business|company|site|website)\b.{0,40}\b(search|google|bing)', 2 ),
+		'your top keywords'         => array( '\b(your|top|target|best|main) keywords\b', 2 ),
+		'businesses like yours'     => array( '\b(businesses|companies|brands|sites|websites) like yours\b', 2 ),
+		'what kind of reach'        => array( '\bwhat (kind|sort) of (reach|results|traffic|leads|growth|visibility)|\b(reach|results|traffic|leads) we (can|could) (get|bring|drive)', 2 ),
 	);
 }
 

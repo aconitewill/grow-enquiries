@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.1 (14th November, 2026)
+
+- **Tighter spam filter for sales pitches**: five new terms, weight 2 each, for a seller talking about the site owner's business rather than their own: "we can get you" (and have, put, bring, drive, help, boost, grow), "your brand" or "your business" near search or Google, "your top keywords" (and target, best, main), "businesses like yours", and "what kind of reach" (or results, traffic, leads). Two of them, or one with any existing term, holds the message. Prompted by an SEO pitch that reached designhousestudio.co.uk scoring only 2 ("keywords"); it now scores 10. Genuine-style test enquiries still score 0 to 2. Like every base term, each can be switched off under Ignored terms.
+
 ## 0.2.0 (19th October, 2026)
 
 Phase 2 of the enquiry module plan.
